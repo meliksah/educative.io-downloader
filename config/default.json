@@ -1,10 +1,11 @@
 {
-    "email": "example@gmail.com",
-    "password": "yourPassword",
+    "email": "test@test.com",
+    "password": "test!",
     "loginCheck": true,
-    "saveAs": "html",
+    "saveAs": "pdf",
     "multiLanguage": false,
     "headless": true,
-    "courseUrl": "https://www.educative.io/courses/grokking-the-behavioral-interview",
-    "downloadAllCourses": false
+    "courseUrl": "https://www.educative.io/courses/grokking-adv-system-design-intvw",
+    "downloadAllCourses": false,
+    "withCookie": false
 }

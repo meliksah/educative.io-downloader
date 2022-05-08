@@ -1,6 +1,6 @@
 import * as config from 'config';
 import { isDireectoryExists, mkdir, writeFile, isFileExists } from './helpers';
-import { ROOT_PATH, HTTP_REQUEST_TIMEOUT, PageTitleAndLink, SAVE_LESSON_AS, AvailableCourses, BATCH_SIZE } from './globals';
+import { ROOT_PATH, HTTP_REQUEST_TIMEOUT, PageTitleAndLink, SAVE_LESSON_AS, AvailableCourses, BATCH_SIZE, COURSE_LINK_SELECTOR } from './globals';
 import { getPage, getSpecialBrowser } from './browser';
 import { Browser, Page } from 'puppeteer';
 
@@ -25,8 +25,14 @@ export async function fetchAllCoursesAvailableToDownload(url: string, cursor: st
     return document.querySelector("body").innerText;
   });
 
-  const availableCourses: AvailableCourses = JSON.parse(response);
-
+  let availableCourses: AvailableCourses;
+  try {
+    availableCourses = JSON.parse(response);
+  }
+  catch(error) {
+    console.log(error);
+  }
+  
   for (const availableCourse of availableCourses.summaries) {
     if (availableCourse.discounted_price === 0.0 || availableCourse.owned_by_reader) {
       COURSE_URL_SLUG_LIST.push(availableCourse.course_url_slug);
@@ -44,6 +50,34 @@ export async function fetchAllCoursesAvailableToDownload(url: string, cursor: st
   }
 
   return COURSE_URL_SLUG_LIST;
+}
+export async function fetchAllCoursesInPathToDownload(url: string, cursor: string = ''): Promise<string[]> {
+
+  await getSpecialBrowser();
+
+  const page = await getPage();
+
+  await page.goto(url + cursor, { timeout: HTTP_REQUEST_TIMEOUT, waitUntil: 'networkidle0' });
+
+  const listSlugs = await page.evaluate(() => {
+    const list = [];
+    const listCourse = document.querySelectorAll("p[title='Module Title']");
+    listCourse.forEach((availableCourse) => {
+      const courseAnchor = availableCourse.closest('a.cursor-pointer');
+      if (courseAnchor) {
+        list.push(courseAnchor.getAttribute('href'));
+      }
+    });
+
+    if (listCourse.length > 1) {
+      console.log(`Found ${listCourse.length} courses to download on this page.`);
+    } else {
+      console.log(`Found ${listCourse.length} course to download on this page.`);
+    }
+    return list;
+  });
+
+  return listSlugs;
 }
 
 export async function downloadCourse(courseUrl: string) {
@@ -89,15 +123,15 @@ async function fetchLessonUrls(courseUrl: string): Promise<PageTitleAndLink[]> {
 
   console.log(`Looking for lessons\'s urls`);
 
-  const pageLinks = await page.evaluate(() => {
-    const links: HTMLAnchorElement[] = Array.from(document.querySelectorAll('.tab-content a'));
+  const pageLinks = await page.evaluate(({COURSE_LINK_SELECTOR}) => {
+    const links: HTMLAnchorElement[] = Array.from(document.querySelectorAll(COURSE_LINK_SELECTOR));
     return links.map((link) => {
       return {
         title: link.innerText,
         link: link.href
       };
     });
-  });
+  }, {COURSE_LINK_SELECTOR});
 
   console.log(`Total lessons: ${pageLinks.length}`);
   // await page.close();
@@ -124,10 +158,18 @@ async function downloadPage(title: string, link: string): Promise<void> {
 
     await page.goto(link, { timeout: HTTP_REQUEST_TIMEOUT, waitUntil: 'networkidle0' });
 
-    await page.addStyleTag({ content: 'div[class^="styles__PrevNextButtonWidgetStyled"], div[class^="styles__Footer"], nav { display: none !important; }' });
+    const uiBlockSelectorsToHide = [
+      'div[class^="styles__PrevNextButtonWidgetStyled"]',
+      'div[class^="styles__Footer"]',
+      'div[class^="styles__Pagination-iis34-3"]', // prev-next buttons in footer
+      'div[class^="styles__ButtonsPanelStyled-ju0obm-0"]', // settings and help button right top corner
+      'nav'];
+    
+    await page.addStyleTag({ content: uiBlockSelectorsToHide.join(', ') + '{ display: none !important; }'});
 
     await page.addStyleTag({ content: 'div[class^="styles__CodeEditorStyled-sc"]{ height: 5000px !important; }' });
     await page.addStyleTag({ content: 'div[class^="PageContent"]{ max-width: 1000px !important; }' });
+
     /**
      * The callback function passed to evaluate is actually executed in the browser.
      * This is why we have to pass local variables explicitly in the second parameter.
@@ -386,7 +428,6 @@ async function savePage(page: Page, path: string) {
 * 4. Extract available languages of code snippet to download them all in respective folder.
 */
 async function pageEvaluation({ SAVE_AS, SAVE_LESSON_AS }) {
-
   // Convert SVG image into Data URL and  also get rid of unescape characters
   const parentElements = document.getElementsByClassName('canvas-svg-viewmode');
   // tslint:disable-next-line: prefer-for-of
@@ -413,14 +454,16 @@ async function pageEvaluation({ SAVE_AS, SAVE_LESSON_AS }) {
 
   // Remove top & left space
   const node = document.getElementById('view-collection-article-content-root');
-  if (SAVE_AS === SAVE_LESSON_AS.PDF) {
-    node?.childNodes[0]?.childNodes[0]?.childNodes[0]?.remove();
-  } else {
-    node.style.cssText = 'margin-top: -70px';
+  if (node) {
+    if (SAVE_AS === SAVE_LESSON_AS.PDF) {
+      node?.childNodes[0]?.childNodes[0]?.childNodes[0]?.remove();
+    } else {
+      node.style.cssText = 'margin-top: -70px';
 
-    const content = node?.childNodes[0]?.childNodes[0]?.childNodes[1]?.childNodes[0]?.childNodes[0];
-    node?.childNodes[0]?.childNodes[0]?.childNodes[1]?.appendChild(content);
-    node?.childNodes[0]?.childNodes[0]?.childNodes[0]?.remove();
+      const content = node.childNodes[0]?.childNodes[0]?.childNodes[1]?.childNodes[0]?.childNodes[0];
+      node.childNodes[0]?.childNodes[0]?.childNodes[1]?.appendChild(content);
+      node.childNodes[0]?.childNodes[0]?.childNodes[0]?.remove();
+    }
   }
 
   // Fetch available language of code snippets
@@ -528,7 +571,7 @@ async function buttonClicks() {
 
   buttonsToClick.forEach((buttonText) => {
     try {
-      const buttonTextXpath = document.evaluate('//button[span[text()="' + buttonText + '"]]', document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+      const buttonTextXpath = document.evaluate('//button[text()="' + buttonText + '"]', document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
       for (let i = 0; i < buttonTextXpath.snapshotLength; i++) {
         const buttonTextXpathElement = buttonTextXpath.snapshotItem(i) as HTMLElement;
         buttonTextXpathElement.click();

@@ -1,11 +1,17 @@
-import { launch, LaunchOptions, Browser, Page } from 'puppeteer';
+import * as puppeteer from 'puppeteer';
+import * as config from 'config';
 import { ROOT_PATH, IS_HEADLESS } from './globals';
+const fs = require('fs').promises;
+import path = require("path");
 
-let browser: Browser;
+const WITH_COOKIE: boolean = config.get('withCookie');
+console.log(`WITH_COOKIE: ${WITH_COOKIE}`);
+
+let browser: puppeteer.Browser;
 let isSpecialBrowser = false;
 
 async function launchBrowser(args?: object) {
-  let configuration: LaunchOptions = {
+  let configuration: puppeteer.LaunchOptions = {
     userDataDir: ROOT_PATH + 'data',
     headless: IS_HEADLESS
   };
@@ -17,10 +23,10 @@ async function launchBrowser(args?: object) {
     };
   }
 
-  browser = await launch(configuration);
+  browser = await puppeteer.launch(configuration);
 }
 
-export async function getBrowser(): Promise<Browser> {
+export async function getBrowser(): Promise<puppeteer.Browser> {
   if (!browser) {
     await launchBrowser();
   }
@@ -28,7 +34,7 @@ export async function getBrowser(): Promise<Browser> {
   return browser;
 }
 
-export async function getSpecialBrowser(): Promise<Browser> {
+export async function getSpecialBrowser(): Promise<puppeteer.Browser> {
   const specialArgs = {
     defaultViewport: null,
     args: ['--window-size=1920,0']
@@ -52,7 +58,7 @@ export async function getSpecialBrowser(): Promise<Browser> {
   return browser;
 }
 
-export async function getPage(): Promise<Page> {
+export async function getPage(): Promise<puppeteer.Page> {
   if (!browser) {
     throw new Error('No browser initialted yet');
   }
@@ -61,7 +67,11 @@ export async function getPage(): Promise<Page> {
   if (!page) {
     page = await browser.newPage();
   }
-
+  if(WITH_COOKIE) {
+    const cookiesString = await fs.readFile(path.join(__dirname + '/../../config/cookie.json'));
+    const cookies = JSON.parse(cookiesString);
+    await page.setCookie(...cookies);
+  }
   return page;
 }
 
